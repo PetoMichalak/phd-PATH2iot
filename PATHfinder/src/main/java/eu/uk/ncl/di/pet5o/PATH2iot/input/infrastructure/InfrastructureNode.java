@@ -221,6 +221,7 @@ public class InfrastructureNode implements Cloneable {
                     return true;
             }
         }
+//        System.err.println(resourceType + " cannot run " + type + " " + operator);
         return false;
     }
 }

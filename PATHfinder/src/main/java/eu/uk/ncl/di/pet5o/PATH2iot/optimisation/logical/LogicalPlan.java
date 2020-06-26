@@ -178,6 +178,20 @@ public class LogicalPlan {
         return null;
     }
 
+    public CompOperator getSelect(int skip, String type) {
+        int skipCounter = 0;
+        for (CompOperator op : operators) {
+            if (op.getName().equals(type)) {
+                if (skipCounter == skip) {
+                    return op;
+                } else {
+                    skipCounter++;
+                }
+            }
+        }
+        return null;
+    }
+
     /**
      * Removes the given operator from current position within the logical plan and
      * moves it closer to the data source (upstream).
@@ -312,5 +326,18 @@ public class LogicalPlan {
 
     public ArrayList<CompOperator> getOperators() {
         return operators;
+    }
+
+    /**
+     * checks whether the logical plan contains any select operators
+     * @return
+     */
+    public boolean hasSelect() {
+        for (CompOperator operator : operators) {
+            if (operator.getName().equals("SELECT")) {
+                return true;
+            }
+        }
+        return false;
     }
 }

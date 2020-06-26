@@ -79,6 +79,12 @@ public class EsperSodaInspector {
             FromClause fromClause = eplModel.getFromClause();
             inspectFromClause(fromClause, eplHandle);
 
+            // check for having clause
+            Expression havingClause = eplModel.getHavingClause();
+            if (havingClause != null) {
+                inspectHavingClause((RelationalOpExpression) havingClause, eplHandle);
+            }
+
             // MATCH_RECOGNIZE - optional
             MatchRecognizeClause matchRecognizeClause = eplModel.getMatchRecognizeClause();
             if (matchRecognizeClause != null) {
@@ -96,10 +102,32 @@ public class EsperSodaInspector {
             lastCompNodeId = eplHandle.getLastCompNodeId();
 
             // strip unnecessary fields
-            eplHandle.dropFields();
+//            eplHandle.dropFields();
 
             logger.info("  --epl-done--\n");
         }
+    }
+
+    /**
+     * Process having part of the EPL statement
+     * @param havingClause extracted HAVING clause
+     * @param eplHandle instance of active epl helper
+     */
+    private void inspectHavingClause(RelationalOpExpression havingClause, EplHandler eplHandle) {
+        // create node representation
+        int compId = neoHandler.createComp("HAVING", eplHandle.getOrigin(), eplHandle.getDestination(),
+                havingClause.getOperator(), "HAVING",1, 1);
+
+        // link with previous computation
+        neoHandler.createRel(eplHandle.getLastCompNodeId(), "DOWNSTREAM", compId);
+
+        // find the parameter
+        CountProjectionExpression havingExp = (CountProjectionExpression) havingClause.getChildren().get(0);
+        PropertyValueExpression havingChild = (PropertyValueExpression) havingExp.getChildren().get(0);
+        int sourceId = neoHandler.findSource(havingChild.getPropertyName(), eplHandle.getOrigin());
+
+        // update epl handler
+        eplHandle.setLastCompNodeId(compId);
     }
 
     /**
@@ -187,7 +215,9 @@ public class EsperSodaInspector {
             return true;
        } if (expression.getClass().equals(SumProjectionExpression.class)) {
             return true;
-       } else { // handle all other cases
+       } if (expression.getClass().equals(CurrentTimestampExpression.class)) {
+            return true;
+        } else { // handle all other cases
            return false;
        }
     }
@@ -273,9 +303,20 @@ public class EsperSodaInspector {
             // link up with previuos and update
             neoHandler.createRel(eplHandle.getLastCompNodeId(), "DOWNSTREAM", compId);
             eplHandle.setLastCompNodeId(compId);
-        } else
+        } if (expression.getClass().equals(CurrentTimestampExpression.class)) {
+            CurrentTimestampExpression exp = (CurrentTimestampExpression) expression;
 
-            { // handle the rest of them
+            // create a computation node
+            int projectId = neoHandler.createProject("current_timestamp", "current_timestamp", "long",
+                    eplHandle.getOrigin(), eplHandle.getDestination());
+
+
+            // save expression for compiling stage
+            eplOps.put(projectId, new EplOperator(EplOperator.EsperOpType.SELECT, selectClauseExpression));
+
+            // link up with previous
+            neoHandler.createRel(eplHandle.getLastCompNodeId(), "STREAMS", projectId);
+        } else { // handle the rest of them
             logger.error("This expression is not supported: " + expression.getClass().getSimpleName());
         }
     }
@@ -692,18 +733,34 @@ public class EsperSodaInspector {
             for (Expression exp : timeExp.getChildren()) {
                 if (exp.getClass().equals(ConstantExpression.class)) {
                     ConstantExpression cExp = (ConstantExpression) exp;
-                    int windowLengthInSeconds = (int) cExp.getConstant();
+                    double windowLength = 0;
+                    try {
+                        windowLength = (double) cExp.getConstant();
+                    } catch (Exception e) {
+                        // try conversion again
+                        windowLength = new Double(String.valueOf(cExp.getConstant()));
+                    }
 
                     // create a representation for window
-                    int nodeId = neoHandler.createComp("win(" + windowLengthInSeconds + ")",
+                    int nodeId = neoHandler.createComp("win(" + windowLength + ")",
                             eplHandle.getOrigin(), eplHandle.getDestination(), "win",
-                            String.valueOf(windowLengthInSeconds),1,1);
+                            String.valueOf(windowLength),1,1);
 
                     // link up with previous computation
                     neoHandler.createRel(parentId, "DOWNSTREAM", nodeId);
 
                     // wildcard pull Projects from previous output
                     pullAllProjects(eplHandle.getLastCompNodeId(), nodeId);
+
+                    // check for loose computation endpoints
+                    ArrayList<Integer> compIds = neoHandler.findLooseCompNodes(eplHandle.getOrigin(), "DOWNSTREAM");
+
+                    // link loose comp (if not the origin)
+                    for (int compId : compIds) {
+                        if (compId != nodeId) {
+                            neoHandler.createRel(compId, "DOWNSTREAM", nodeId);
+                        }
+                    }
 
                     // set as current computation
                     eplHandle.setLastCompNodeId(nodeId);
@@ -864,16 +921,113 @@ public class EsperSodaInspector {
         for (Stream stream : fromClause.getStreams()) {
             FilterStream filterStream = (FilterStream) stream;
 
+            // is filter condition attached to from stream? - handling between and relationOpExpression
+            if (filterStream.getFilter().getFilter() != null) {
+                for (Expression predicate : (filterStream.getFilter().getFilter().getChildren())) {
+                    // check between predicate
+                    if (predicate.getClass().equals(BetweenExpression.class)) {
+                        logger.debug("BETWEEN expression detected - processing..");
+                        addBetweenOperator((BetweenExpression) predicate, eplHandle);
+                    }
+
+                    // check relationOpExpression
+                    if (predicate.getClass().equals(RelationalOpExpression.class)) {
+                        logger.debug("Relational Operator detected - processing");
+                        addRelOpExpression((RelationalOpExpression) predicate, eplHandle);
+                    }
+                    // persist for compilation phase
+                    eplOps.put(eplHandle.getLastCompNodeId(), new EplOperator(EplOperator.EsperOpType.FROM, stream));
+                }
+            }
+
             // is a window?
             for (View view : filterStream.getViews()) {
                 for (Expression expression : view.getParameters()) {
                     processExpression(expression, eplHandle.getLastCompNodeId(), eplHandle);
                 }
 
+                // check if this is a size operator - reserved word
+                if (view.getName().equals("size")) {
+                    logger.debug("Size operator detected - processing");
+                    addOperator(view.getName(), eplHandle);
+                }
+
                 // persist for compilation phase
                 eplOps.put(eplHandle.getLastCompNodeId(), new EplOperator(EplOperator.EsperOpType.FROM, stream));
             }
         }
+    }
+
+    /**
+     * Add arbitrary operator
+     * @param name name of the operator
+     * @param eplHandle instance of active epl helper
+     */
+    private void addOperator(String name, EplHandler eplHandle) {
+        // create a representation for the operation
+        int nodeId = neoHandler.createComp(name,
+                eplHandle.getOrigin(), eplHandle.getDestination(), name,
+                name,1,1);
+
+        // link up with previous computation
+        neoHandler.createRel(eplHandle.getLastCompNodeId(), "DOWNSTREAM", nodeId);
+
+        // set as current computation
+        eplHandle.setLastCompNodeId(nodeId);
+    }
+
+    /**
+     * creates a represenation of relopexpression predicate within the graph
+     * @param predicate relopexpression operator
+     * @param eplHandle instance of active epl helper
+     */
+    private void addRelOpExpression(RelationalOpExpression predicate, EplHandler eplHandle) {
+        PropertyValueExpression exp = (PropertyValueExpression) predicate.getChildren().get(0);
+
+        // find the source in the graph
+        int sourceId = neoHandler.findSource(exp.getPropertyName(), eplHandle.getOrigin());
+
+        // create a representation for the operation
+        int nodeId = neoHandler.createComp(predicate.getOperator(),
+                eplHandle.getOrigin(), eplHandle.getDestination(), "FILTER",
+                predicate.getOperator(),1,1);
+
+        // link up with previous computation
+        neoHandler.createRel(eplHandle.getLastCompNodeId(), "DOWNSTREAM", nodeId);
+
+        // pull project to the operator
+        neoHandler.createRel(sourceId, "STREAMS", nodeId);
+
+        // set as current computation
+        eplHandle.setLastCompNodeId(nodeId);
+    }
+
+    /**
+     * creates a represenation of BETWEEN predicate within the graph
+     * @param predicate between operator
+     * @param eplHandle instance of active epl helper
+     */
+    private void addBetweenOperator(BetweenExpression predicate, EplHandler eplHandle) {
+        // get property name
+        PropertyValueExpression exp = (PropertyValueExpression) predicate.getChildren().get(0);
+
+        // find the source in the graph
+        int sourceId = neoHandler.findSource(exp.getPropertyName(), eplHandle.getOrigin());
+
+        // create a representation for the operation
+        int nodeId = neoHandler.createComp("BETWEEN",
+                eplHandle.getOrigin(), eplHandle.getDestination(), "FILTER",
+                "BETWEEN" ,1,1);
+
+        // pull project to the operator
+        neoHandler.createRel(sourceId, "STREAMS", nodeId);
+
+        // link up with previous computation
+        int originID = neoHandler.findSourceOrigin(sourceId, nodeId, "STREAMS");
+        neoHandler.createRel(originID, "DOWNSTREAM", nodeId);
+
+        // set as current computation
+        eplHandle.setLastCompNodeId(nodeId);
     }
 
     /**

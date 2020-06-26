@@ -106,7 +106,7 @@ public class PhysicalPlan {
     /**
      * Places operator directly on the node - used when deep copying the physical plans
      */
-    private void directPlacement(CompOperator op, InfrastructureNode node) {
+    public void directPlacement(CompOperator op, InfrastructureNode node) {
         if (placement.containsKey(node)) {
             placement.get(node).add(op);
             currentOps.add(op);

@@ -19,15 +19,18 @@ public class CompOperator {
     private double selectivityRatio;
     private double dataOut;
     private int nodeId;
+    private ComplexDataOut complexDataOut;
     private ArrayList<Integer> downstreamOpIds;
 
     public CompOperator() {
         downstreamOpIds = new ArrayList<>();
+        complexDataOut = new ComplexDataOut();
     }
 
     public CompOperator(int nodeId) {
         this.nodeId = nodeId;
         downstreamOpIds = new ArrayList<>();
+        complexDataOut = new ComplexDataOut();
     }
 
     public CompOperator getCopy() {
@@ -44,6 +47,10 @@ public class CompOperator {
         for (Integer downstreamOpId : downstreamOpIds) {
             tempOp.addDownstreamOp(downstreamOpId);
         }
+        tempOp.complexDataOut.setTriggersPerSecond(complexDataOut.getTriggersPerSecond());
+        tempOp.complexDataOut.setEventCountPerTrigger(complexDataOut.getEventCountPerTrigger());
+        tempOp.complexDataOut.setEventSize(complexDataOut.getEventSize());
+        tempOp.complexDataOut.setCalculated(complexDataOut.isCalculated());
         return tempOp;
     }
 
@@ -53,6 +60,7 @@ public class CompOperator {
         this.streamOrigin = streamOrigin;
         this.streamDestination = streamDestination;
         downstreamOpIds = new ArrayList<>();
+        complexDataOut = new ComplexDataOut();
     }
 
     /**
@@ -187,6 +195,14 @@ public class CompOperator {
                 tempDownIds.add(downstreamOpId);
         }
         downstreamOpIds = tempDownIds;
+    }
+
+    public ComplexDataOut getComplexDataOut() {
+        return complexDataOut;
+    }
+
+    public void setComplexDataOut(ComplexDataOut complexDataOut) {
+        this.complexDataOut = complexDataOut;
     }
 
     /**

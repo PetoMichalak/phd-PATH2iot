@@ -184,10 +184,53 @@ public class OperatorHandler {
         switch (optiTechnique) {
             case "win":
                 return windowOptimisation(logicalPlan);
+            case "select":
+                return selectOptimisation(logicalPlan);
             default:
                 logger.error(String.format("Given logical optimisation: %s is not supported.", optiTechnique));
         }
         return null;
+    }
+
+    /**
+     * Applies pushing projects optimisation technique
+     * * scans for project type operators in the logical plan
+     * * creates a new logical plan when project operator is moved closer to the data source
+     * @param logicalPlan logical plan to optimise
+     * @return array list of new logical plans created
+     */
+    private ArrayList<LogicalPlan> selectOptimisation(LogicalPlan logicalPlan) {
+        ArrayList<LogicalPlan> optimisedPlans = new ArrayList<>();
+        if (logicalPlan.hasSelect()) {
+            pushSelectCloserToTheDataSource(logicalPlan, optimisedPlans);
+        }
+        return optimisedPlans;
+    }
+
+    private void pushSelectCloserToTheDataSource(LogicalPlan logicalPlan, ArrayList<LogicalPlan> optimisedPlans) {
+        // generate more plans
+        CompOperator selectOp = logicalPlan.getSelect(0, "SELECT");
+        LogicalPlan newLogPlan = logicalPlan.pushOperatorUpstream(selectOp);
+        if (newLogPlan != null) {
+            logger.info("New logical plan: " + newLogPlan);
+            optimisedPlans.add(newLogPlan);
+
+            // try to optimise the new plan
+            selectOptimisationLoop(newLogPlan, optimisedPlans);
+        }
+    }
+
+    private void selectOptimisationLoop(LogicalPlan logicalPlan, ArrayList<LogicalPlan> optimisedPlans) {
+        // generate more plans
+        CompOperator selectOp = logicalPlan.getOperator(0, "SELECT");
+        LogicalPlan newLogPlan = logicalPlan.pushOperatorUpstream(selectOp);
+        if (newLogPlan != null) {
+            logger.info("New logical plan: " + newLogPlan);
+            optimisedPlans.add(newLogPlan);
+
+            // try to optimise the new plan
+            windowOptimisationLoop(newLogPlan, optimisedPlans);
+        }
     }
 
     /**
@@ -260,7 +303,18 @@ public class OperatorHandler {
      */
     public ArrayList<PhysicalPlan> placeLogicalPlan(LogicalPlan logicalPlan, InfrastructurePlan infra) {
         PhysicalPlacementGenerator ppGen = new PhysicalPlacementGenerator();
-        return ppGen.generatePhysicalPlans(logicalPlan, infra);
+        // use traditional strategy for pipeline plans
+        if (isPipeline(logicalPlan)) {
+            return ppGen.generatePhysicalPlans(logicalPlan, infra);
+        } else {
+            return ppGen.generateBranchedPhysicalPlans(logicalPlan, infra);
+        }
+    }
+
+    private boolean isPipeline(LogicalPlan logicalPlan) {
+        // TODO - get all paths from root to the last operation
+        // if more than one path found - the plan is not a pipeline
+        return false;
     }
 
     public ArrayList<PhysicalPlan> getPhysicalPlans() {
@@ -496,4 +550,108 @@ public class OperatorHandler {
             }
         }
     }
+
+    /**
+     * loops through the plan and calculate per operator data out and triggering frequency
+     * @param inputHandler current instance of input handler for operator info
+     */
+    public void calculateBandwidthTransmissionDataOut(InputHandler inputHandler) {
+        for (PhysicalPlan physicalPlan : enumeratedPhysicalPlans) {
+            // find source operators and calculate the output data payload
+            ArrayList<CompOperator> sourceOps = physicalPlan.getSourceOps();
+
+            // update the selectivity and generation ratios
+            updateCoefficients(physicalPlan, inputHandler.getEIcoeffs());
+
+            // calc data out for all operators
+            for (CompOperator sourceOp : sourceOps) {
+                calcDataOut(sourceOp, physicalPlan.getCurrentOps());
+            }
+
+        }
+    }
+
+    /**
+     * Calculate data out of the operator, 
+     * only if all upstream operators have been calculated already 
+     * @param op compoperator for which calc needs to happen
+     * @param ops all operators within the plan
+     */
+    private void calcDataOut(CompOperator op, ArrayList<CompOperator> ops) {
+        // check that all upstream operators have been calculated (if present in the physical plan exist)
+        ArrayList<CompOperator> upstreamOps = getAllUpstreamOp(op, ops);
+        double upstreamOpDataOutContribution = 0;
+        double maxTriggersPerSecond = -1;
+        if (upstreamOps.size() > 0) {
+            // check that upstream operators were calculated
+            for (CompOperator upstreamOp : upstreamOps) {
+                if (!upstreamOp.getComplexDataOut().isCalculated()) {
+                    // the upstream operator was not calculated yet, break current operator data out calculation
+                    return;
+                }
+            }
+
+            // all upstream operators are ok - get their dataout contributions
+            for (CompOperator upstreamOp : upstreamOps) {
+                upstreamOpDataOutContribution += upstreamOp.getComplexDataOut().getEventCountPerTrigger();
+                if (maxTriggersPerSecond < op.getGenerationRatio()) {
+                    // update generation ratio as to the highest one from the upstream operators
+                    maxTriggersPerSecond = op.getGenerationRatio();
+                }
+            }
+        }
+
+        // calc current operator data impact
+        if (upstreamOpDataOutContribution > 0) {
+            op.getComplexDataOut().setEventCountPerTrigger(upstreamOpDataOutContribution * op.getSelectivityRatio());
+        } else {
+            op.getComplexDataOut().setEventCountPerTrigger(op.getGenerationRatio());
+        }
+
+        // if tumbling window - set selectivity ratio to triggers
+        if (!op.getType().toLowerCase().equals("win")) {
+            // TODO - check if tumbling window and set to
+            op.getComplexDataOut().setTriggersPerSecond(op.getSelectivityRatio());
+        } else {
+            // update generation/trigger count ratio to the highest
+            op.getComplexDataOut().setTriggersPerSecond(maxTriggersPerSecond);
+        }
+
+        // get data out for all downstream operators
+        for (Integer downstreamOpId : op.getDownstreamOpIds()) {
+            CompOperator downstreamOp = getOperator(downstreamOpId, ops);
+            calcDataOut(downstreamOp, ops);
+        }
+        logger.debug(String.format("Op: %s (%s) data out calculated.", op.getType(), op));
+    }
+
+    /**
+     * Return object of the op from the passed list;
+     */
+    private CompOperator getOperator(Integer opId, ArrayList<CompOperator> ops) {
+        for (CompOperator op : ops) {
+            if (op.getNodeId() == opId) {
+                return op;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Find and return all upstream operators
+     */
+    private ArrayList<CompOperator> getAllUpstreamOp(CompOperator op, ArrayList<CompOperator> ops) {
+        ArrayList<CompOperator> opsOut = new ArrayList<>();
+        for (CompOperator tempOp : ops) {
+            for (Integer downstreamOpId : op.getDownstreamOpIds()) {
+                if (downstreamOpId == op.getNodeId()) {
+                    // this is a upstream op - keep it
+                    opsOut.add(tempOp);
+                }
+            }
+        }
+        return opsOut;
+    }
+
+
 }

@@ -35,9 +35,12 @@ import java.util.ArrayList;
 public class App
 {
     private static final String PLAN_OUT_FILE = "target/physical_plans.csv";
+    private static final boolean PUSH_WINDOWS = false;
+    private static final boolean PUSH_SELECT = true;
     private static final boolean DEPLOY = false;
     private static boolean USE_EXTERNAL_MODULE;
     private static Logger logger = LogManager.getLogger(App.class);
+    private static final boolean BANDWIDTH = false;
 
     private static InputHandler inputHandler;
     private static NeoHandler neoHandler;
@@ -83,10 +86,14 @@ public class App
             opHandler.buildLogicalPlan(inputHandler.getUdfs());
 
             // 2a optimise logical plan
-            opHandler.appendLogicalPlans(opHandler.applyLogicalOptimisation(opHandler.getInitialLogicalPlan(), "win"));
-            logger.info(String.format("[pushing windows] There are %d logical plans.", opHandler.getLogicalPlanCount()));
-            // todo push projects closer to the data source
-            // todo inject windows
+            if (PUSH_SELECT) {
+                opHandler.appendLogicalPlans(opHandler.applyLogicalOptimisation(opHandler.getInitialLogicalPlan(), "select"));
+                logger.info(String.format("[pushing projects] There are %d logical plans.", opHandler.getLogicalPlanCount()));
+            }
+            if (PUSH_WINDOWS) {
+                opHandler.appendLogicalPlans(opHandler.applyLogicalOptimisation(opHandler.getInitialLogicalPlan(), "win"));
+                logger.info(String.format("[pushing windows] There are %d logical plans.", opHandler.getLogicalPlanCount()));
+            }
 
             // 2b enumerate physical plans
             for (LogicalPlan logicalPlan : opHandler.getLogicalPlans()) {
@@ -97,7 +104,12 @@ public class App
             logger.info(String.format("[generating phys plans] There are %d physical plans in the collection.", opHandler.getPhysicalPlanCount()));
 
             // 2c calculate data out for all operators in all physical plans
-            opHandler.calculateDataOut(inputHandler.getEIcoeffs());
+            if (BANDWIDTH) {
+                // need for transmission frequency
+                opHandler.calculateBandwidthTransmissionDataOut(inputHandler);
+            } else {
+                opHandler.calculateDataOut(inputHandler.getEIcoeffs());
+            }
 
             // 2d prune physical plans
             opHandler.pruneNonDeployablePhysicalPlans();
