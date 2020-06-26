@@ -260,7 +260,18 @@ public class OperatorHandler {
      */
     public ArrayList<PhysicalPlan> placeLogicalPlan(LogicalPlan logicalPlan, InfrastructurePlan infra) {
         PhysicalPlacementGenerator ppGen = new PhysicalPlacementGenerator();
-        return ppGen.generatePhysicalPlans(logicalPlan, infra);
+        // use traditional strategy for pipeline plans
+        if (isPipeline(logicalPlan)) {
+            return ppGen.generatePhysicalPlans(logicalPlan, infra);
+        } else {
+            return ppGen.generateBranchedPhysicalPlans(logicalPlan, infra);
+        }
+    }
+
+    private boolean isPipeline(LogicalPlan logicalPlan) {
+        // TODO - get all paths from root to the last operation
+        // if more than one path found - the plan is not a pipeline
+        return false;
     }
 
     public ArrayList<PhysicalPlan> getPhysicalPlans() {
@@ -493,6 +504,28 @@ public class OperatorHandler {
                 ArrayList<CompOperator> tempOps = new ArrayList<>();
                 tempOps.add(downstreamOp);
                 calculateDataOutForAllOps(tempOps, physicalPlan);
+            }
+        }
+    }
+
+    /**
+     * loops through the plan and calculate per operator data out and triggering frequency
+     * @param inputHandler current instance of input handler for operator info
+     */
+    public void calculateBandwidthTransmissionDataOut(InputHandler inputHandler) {
+        for (PhysicalPlan physicalPlan : enumeratedPhysicalPlans) {
+            // find source operators and calculate the output data payload
+            ArrayList<CompOperator> sourceOps = physicalPlan.getSourceOps();
+
+            // each operator should have data out as number of events per trigger
+            // event size
+            // trigger frequency
+
+            // update the selectivity and generation ratios
+            updateCoefficients(physicalPlan, inputHandler.getEIcoeffs());
+
+            for (CompOperator sourceOp : sourceOps) {
+                sourceOp.setDataOut(sourceOp.getGenerationRatio() * sourceOp.getSelectivityRatio());
             }
         }
     }

@@ -1025,4 +1025,45 @@ public class NeoHandler {
         }
         return out;
     }
+
+    /**
+     * Find the origin computation of the shared project
+     * CYPHER: match (m)-[:STREAMS]-(n)-[:STREAMS]->(f) WHERE ID(n)=42 AND ID(f)=21 RETURN ID(m)
+     * @param sourceId id of shared project
+     * @param nodeId id of current node
+     * @param connection name of the connection
+     * @return id of the origin of the source
+     */
+    public int findSourceOrigin(int sourceId, int nodeId, String connection) {
+        int resId = -1;
+        String query = String.format("match (m)-[:%s]-(n)-[:%s]->(f) WHERE ID(n)=%d AND ID(f)=%d RETURN ID(m) as id",
+                connection, connection, sourceId, nodeId);
+        try (Statement stmt = con.createStatement()) {
+            ResultSet rs = stmt.executeQuery(query);
+            while (rs.next()) {
+                // should really have only one result
+                resId = rs.getInt("id");
+            }
+            logger.debug("Source node found: " + nodeId);
+        } catch (SQLException e) {
+            logger.error("Error executing query: " + query + "; error: " + e.getMessage());
+        }
+        return resId;
+    }
+
+    public ArrayList<Integer> findLooseCompNodes(String streamDestination, String streamRel) {
+        ArrayList<Integer> out = new ArrayList<>();
+        String query = String.format("match (n:COMP {streamDestination:\"%s\"}) where NOT (n)-[:%s]->() return ID(n) as id",
+                streamDestination, streamRel);
+        try (Statement stmt = con.createStatement()) {
+            ResultSet rs = stmt.executeQuery(query);
+            while (rs.next()) {
+                out.add(rs.getInt("id"));
+            }
+            logger.debug("Query: " + query + " - executed.");
+        } catch (SQLException e) {
+            logger.error("Error executing query: " + query + "; error: " + e.getMessage());
+        }
+        return out;
+    }
 }

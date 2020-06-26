@@ -44,6 +44,9 @@ public class InputHandler {
     private static String RESOURCEEI_DEF_FILE;
     private static String PATH_DEPLOYER_IP;
     private static int PATH_DEPLOYER_PORT;
+    private static boolean EX_MODULE_ENABLED;
+    private static String EX_MODULE_IP;
+    private static int EX_MODULE_PORT;
 
     private EnergyImpactCoefficients energyImpactCoefficients;
     private InfrastructureDesc infrastructureDesc;
@@ -89,7 +92,9 @@ public class InputHandler {
             EXEC_OUT_FILE = config.getString("EXEC_OUT_FILE");
             PATH_DEPLOYER_IP = config.getString("PATH_DEPLOYER_IP");
             PATH_DEPLOYER_PORT = config.getInt("PATH_DEPLOYER_PORT");
-
+            EX_MODULE_ENABLED = config.getBoolean("EX_MODULE_ENABLED");
+            EX_MODULE_IP = config.getString("EX_MODULE_IP");
+            EX_MODULE_PORT = config.getInt("EX_MODULE_PORT");
         } catch (Exception e) {
             logger.info(String.format("Error parsing the config file: %s -> \n%s",
                     configPath, e.getMessage()));
@@ -162,6 +167,18 @@ public class InputHandler {
 
     public static int getPathDeployerPort() {
         return PATH_DEPLOYER_PORT;
+    }
+
+    public static boolean isExModuleEnabled() {
+        return EX_MODULE_ENABLED;
+    }
+
+    public static String getExModuleIp() {
+        return EX_MODULE_IP;
+    }
+
+    public static int getExModulePort() {
+        return EX_MODULE_PORT;
     }
 
     /**

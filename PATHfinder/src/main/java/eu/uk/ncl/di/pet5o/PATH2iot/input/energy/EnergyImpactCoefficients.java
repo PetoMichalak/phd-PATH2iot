@@ -60,7 +60,7 @@ public class EnergyImpactCoefficients {
                 }
             }
         }
-        logger.warn(String.format("A cost for %s:%s-%s was not found. Returning -1.",
+        logger.warn(String.format("Generation ratio for %s:%s-%s was not found. Returning -1.",
                 resourceType, opType, operator));
         // cost was not found
         return -1;
@@ -82,7 +82,7 @@ public class EnergyImpactCoefficients {
                 }
             }
         }
-        logger.warn(String.format("A cost for %s:%s-%s was not found. Returning -1.",
+        logger.warn(String.format("Selectivity ratio for %s:%s-%s was not found. Returning -1.",
                 resourceType, opType, operator));
         // cost was not found
         return -1;
