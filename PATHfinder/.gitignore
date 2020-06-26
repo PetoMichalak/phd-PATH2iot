@@ -1,0 +1,5 @@
+.idea/
+target/
+input/pathFinder.conf
+input/fullT2/
+PATHfinder.iml
