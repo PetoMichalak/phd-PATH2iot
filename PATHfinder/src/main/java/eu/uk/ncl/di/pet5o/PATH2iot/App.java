@@ -11,8 +11,14 @@ import eu.uk.ncl.di.pet5o.PATH2iot.utils.*;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Scanner;
 
 /**
  * PATHfinder is a self-contained module of PATH2iot system.
@@ -36,7 +42,7 @@ public class App
 {
     private static final String PLAN_OUT_FILE = "target/physical_plans.csv";
     private static final boolean DEPLOY = false;
-    private static boolean USE_EXTERNAL_MODULE;
+    private static final boolean USE_EXTERNAL_COST_MODULE = true;
     private static Logger logger = LogManager.getLogger(App.class);
 
     private static InputHandler inputHandler;
@@ -119,7 +125,7 @@ public class App
             for (PhysicalPlan physicalPlan : opHandler.getPhysicalPlans()) {
                 String externalPlanOut = "";
                 int planId = eplRealms.size();
-                if (inputHandler.isExModuleEnabled()) {
+                if (USE_EXTERNAL_COST_MODULE) {
                     // prepare the plan for output to external cost model
                     externalPlanOut = planWriter.exportPlan(physicalPlan, planId,
                             eiEval, infraHandler.getInfrastructureNodes());
@@ -152,31 +158,24 @@ public class App
         logger.info(String.format("There are %d epl realms stored within memory.", eplRealms.size()));
 
         EplRealm eplRealmToDeploy = null;
-        if (inputHandler.isExModuleEnabled()) {
+        if (USE_EXTERNAL_COST_MODULE) {
 
             // initiate connection to external cost module
-            externalCostSocketHandler = new SocketClientHandler(inputHandler.getExModuleIp(),
-                    inputHandler.getExModulePort());
+            externalCostSocketHandler = new SocketClientHandler(inputHandler.getExOptIp(), inputHandler.getExOptPort());
             externalCostSocketHandler.connect();
             for (EplRealm eplRealm : eplRealms) {
-                // externalCostSocketHandler.send(eplRealm);
-                externalCostSocketHandler.printLine(String.valueOf(eplRealm.getPlanOut()));
-                // confirm response
-                externalCostSocketHandler.readLine();
+                    // externalCostSocketHandler.send(eplRealm);
+                    externalCostSocketHandler.printLine(String.valueOf(eplRealm.getPlanOut()));
+//                    System.out.println("Response: " + externalCostSocketHandler.readLine());
             }
             logger.debug("Transmitted all plans to external cost module.");
             externalCostSocketHandler.printLine("EOF");
-
-            // time the execution of the external module
-            long extModuleStart = System.currentTimeMillis();
 
             // get the id of the final plan
             int execPlanId = -1;
             try {
                 execPlanId = Integer.parseInt(externalCostSocketHandler.readLine());
-                long extModuleDuration = System.currentTimeMillis() - extModuleStart;
-                logger.info("The physical plan number: " + execPlanId + " is the best plan (found in " +
-                        extModuleDuration + " ms).");
+                logger.info("The physical plan number: " + execPlanId + " is the best plan.");
             } catch (NumberFormatException e) {
                 logger.error("Received invalid execution plan id from external cost module: " + e.getLocalizedMessage());
                 System.exit(1);
