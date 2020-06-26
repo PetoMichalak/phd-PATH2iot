@@ -3,13 +3,12 @@ package eu.uk.ncl.di.pet5o.PATH2iot.utils;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.PrintWriter;
 import java.net.Socket;
-import java.util.Locale;
-import java.util.Scanner;
 
 /**
- * Serves to connect to deployer and transfer the configuration files over.
+ * Servess to connect to deployer and transfer the configuration files over.
  */
 public class SocketClientHandler {
 
@@ -18,9 +17,6 @@ public class SocketClientHandler {
     private String ip;
     private int port;
     private Socket socket;
-    private ObjectOutputStream oos;
-    private ObjectInputStream ois;
-    private Scanner scanner;
     private PrintWriter out;
 
     public SocketClientHandler(String ip, int port) {
@@ -37,15 +33,7 @@ public class SocketClientHandler {
         while(establishingConnection) {
             try {
                 socket = new Socket(ip, port);
-                InputStream is = socket.getInputStream();
-                scanner = new Scanner(new BufferedInputStream(is));
-                scanner.useLocale(Locale.UK);
-
-                OutputStream os = socket.getOutputStream();
-                OutputStreamWriter osw = new OutputStreamWriter(os);
-                out = new PrintWriter(osw, true);
-//                ois = new ObjectInputStream(socket.getInputStream());
-//                oos = new ObjectOutputStream(socket.getOutputStream());
+                out = new PrintWriter(socket.getOutputStream(), true);
                 logger.debug(String.format("Connection established %s:%d", ip, port));
                 establishingConnection = false;
             } catch (IOException | NullPointerException e) {
@@ -59,42 +47,25 @@ public class SocketClientHandler {
         }
     }
 
-    public String readLine() {
-        return scanner.nextLine();
-    }
-
-    public void printLine(String msg) {
-        out.println(msg);
-    }
-
     /**
      * sends the message over the socket connection
      */
-    public void send(Object msg) throws IOException {
-        oos.writeObject(msg);
-        oos.flush();
-    }
-
-    public void send(String msg) throws IOException {
-        oos.writeUTF(msg);
-        oos.flush();
+    public void send(String msg) {
+        out.println(msg);
     }
 
     /**
      * Closes socket and output buffer.
      */
-    public void close() throws IOException {
+    public void close() {
         // following internal protocol, the server shuts down connection upon receiving "EOF"
         send("EOF");
-        socket.close();
-        oos.close();
+        try {
+            socket.close();
+        } catch (IOException e) {
+            logger.error("Error while closing socket connection: " + e.getMessage());
+        }
+        out.close();
     }
 
-    public int readInt() throws IOException {
-        return ois.readInt();
-    }
-
-    public String readUTF() throws IOException {
-        return ois.readUTF();
-    }
 }

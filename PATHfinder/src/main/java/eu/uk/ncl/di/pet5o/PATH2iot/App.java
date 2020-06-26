@@ -11,32 +11,31 @@ import eu.uk.ncl.di.pet5o.PATH2iot.utils.*;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 
-import java.io.IOException;
 import java.util.ArrayList;
 
 /**
  * PATHfinder is a self-contained module of PATH2iot system.
  *
  * Functionality:
- * EPL decomposition,
- * Non-functional requirements parsing
- * Energy model evaluation
- * Device specific compilation
- * Pebble Watch
- * iPhone / Android
- * Esper node (via d2ESPer)
+   * EPL decomposition,
+   * Non-functional requirements parsing
+   * Energy model evaluation
+   * Device specific compilation
+     * Pebble Watch
+     * iPhone / Android
+     * Esper node (via d2ESPer)
  *
  * @author Peter Michalak
  *
  * Requires:
- * configuration file (usually input/pathFinder.conf)
+   * configuration file (usually input/pathFinder.conf)
  *
  */
-public class App
+public class App 
 {
     private static final String PLAN_OUT_FILE = "target/physical_plans.csv";
     private static final boolean DEPLOY = false;
-    private static boolean USE_EXTERNAL_MODULE;
+    private static final boolean USE_EXTERNAL_COST_MODULE = true;
     private static Logger logger = LogManager.getLogger(App.class);
 
     private static InputHandler inputHandler;
@@ -47,7 +46,6 @@ public class App
     private static InfrastructureHandler infraHandler;
     private static RequirementHandler reqHandler;
     private static SocketClientHandler socketHandler;
-    private static SocketClientHandler externalCostSocketHandler;
     private static ArrayList<EplRealm> eplRealms;
 
     private static int physicalPlanCounter = 0;
@@ -119,7 +117,7 @@ public class App
             for (PhysicalPlan physicalPlan : opHandler.getPhysicalPlans()) {
                 String externalPlanOut = "";
                 int planId = eplRealms.size();
-                if (inputHandler.isExModuleEnabled()) {
+                if (USE_EXTERNAL_COST_MODULE) {
                     // prepare the plan for output to external cost model
                     externalPlanOut = planWriter.exportPlan(physicalPlan, planId,
                             eiEval, infraHandler.getInfrastructureNodes());
@@ -152,99 +150,69 @@ public class App
         logger.info(String.format("There are %d epl realms stored within memory.", eplRealms.size()));
 
         EplRealm eplRealmToDeploy = null;
-        if (inputHandler.isExModuleEnabled()) {
-
-            // initiate connection to external cost module
-            externalCostSocketHandler = new SocketClientHandler(inputHandler.getExModuleIp(),
-                    inputHandler.getExModulePort());
-            externalCostSocketHandler.connect();
+        if (USE_EXTERNAL_COST_MODULE) {
+            planWriter.initOutputFile(PLAN_OUT_FILE);
+            // export all plans
             for (EplRealm eplRealm : eplRealms) {
-                // externalCostSocketHandler.send(eplRealm);
-                externalCostSocketHandler.printLine(String.valueOf(eplRealm.getPlanOut()));
-                // confirm response
-                externalCostSocketHandler.readLine();
+                planWriter.writePlan(eplRealm.getPlanOut(), PLAN_OUT_FILE);
             }
-            logger.debug("Transmitted all plans to external cost module.");
-            externalCostSocketHandler.printLine("EOF");
+            logger.info("All plans exported to: " + PLAN_OUT_FILE);
 
-            // time the execution of the external module
-            long extModuleStart = System.currentTimeMillis();
-
-            // get the id of the final plan
-            int execPlanId = -1;
-            try {
-                execPlanId = Integer.parseInt(externalCostSocketHandler.readLine());
-                long extModuleDuration = System.currentTimeMillis() - extModuleStart;
-                logger.info("The physical plan number: " + execPlanId + " is the best plan (found in " +
-                        extModuleDuration + " ms).");
-            } catch (NumberFormatException e) {
-                logger.error("Received invalid execution plan id from external cost module: " + e.getLocalizedMessage());
-                System.exit(1);
-            }
-
-
-            if (execPlanId >= 0) {
-                // find the returned plan
-                eplRealmToDeploy = eplRealms.get(execPlanId);
-            }
-
-            } else {
-                if (eplRealms.size() > 0) {
-                    eplRealmToDeploy = eplRealms.get(0);
-                    for (EplRealm eplRealm : eplRealms) {
-                        if (eplRealm.getPlan().getEnergyCost() < eplRealmToDeploy.getPlan().getEnergyCost()) {
-                            // this is a cheaper plan
-                            eplRealmToDeploy = eplRealm;
-                        }
+            // todo receive the answer and pick the best plan
+        } else {
+            // loop through the realms and find the one with the least cost
+            if (eplRealms.size() > 0) {
+                eplRealmToDeploy = eplRealms.get(0);
+                for (EplRealm eplRealm : eplRealms) {
+                    if (eplRealm.getPlan().getEnergyCost() < eplRealmToDeploy.getPlan().getEnergyCost()) {
+                        // this is a cheaper plan
+                        eplRealmToDeploy = eplRealm;
                     }
-                } else {
-                    logger.info("There are no plans available in any of the eplRealms! Check your constrains.");
                 }
+            } else {
+                logger.info("There are no plans available in any of the eplRealms! Check your constrains.");
             }
-
-            PathCompiler pathCompiler = null;
-            if (eplRealmToDeploy != null) {
-                logger.info(String.format("The best plan #%d with cost: %.2f (%s)",
-                        eplRealmToDeploy.getId(),
-                        eplRealmToDeploy.getPlan().getEnergyCost(),
-                        eplRealmToDeploy.getPlan()));
-
-                // 4 compile execution plan
-                pathCompiler = new PathCompiler();
-                pathCompiler.compile(eplRealmToDeploy.getPlan(), eplRealmToDeploy.getEplInsperctor(),
-                        eplRealmToDeploy.getInfraDescription(), eplRealmToDeploy.getInputStreams());
-                logger.debug(pathCompiler.getExecutionPlan());
-            }
-
-            if (DEPLOY && pathCompiler != null) {
-                // 5 send the plan to PATHdeployer
-                socketHandler = new SocketClientHandler(inputHandler.getPathDeployerIp(), inputHandler.getPathDeployerPort());
-                socketHandler.connect();
-                try {
-                    socketHandler.send(pathCompiler.getExecutionPlan());
-                } catch (IOException e) {
-                    logger.error("Connection to PATHdeployer failed: " + e.getLocalizedMessage());
-                }
-            }
-
-            logger.info("It is done.");
-            logger.info(String.format("It took %d ms to process through %d physical plans.",
-                    (System.currentTimeMillis() - startTime), physicalPlanCounter));
         }
 
+        PathCompiler pathCompiler = null;
+        if (eplRealmToDeploy != null) {
+            logger.info(String.format("The best plan #%d with cost: %.2f (%s)",
+                    eplRealmToDeploy.getId(),
+                    eplRealmToDeploy.getPlan().getEnergyCost(),
+                    eplRealmToDeploy.getPlan()));
 
-        /**
-         * Initialisation of
-         * * neo4j handler - establish connection, clean the db
-         * * eplInspector - init the ESPer CEP engine
-         * * operator handler - logical and physical plan optimisation module
-         */
-        private static void initInternalHandlers(InputHandler inputHandler) {
-            neoHandler = new NeoHandler(inputHandler.getNeoAddress() + ":" + inputHandler.getNeoPort(),
-                    inputHandler.getNeoUser(), inputHandler.getNeoPass());
-            eplInspector = new EsperSodaInspector(neoHandler);
-            opHandler = new OperatorHandler(neoHandler);
-            reqHandler = new RequirementHandler(inputHandler.getRequirements());
-            planWriter = new PlanWriter();
+            // 4 compile execution plan
+            pathCompiler = new PathCompiler();
+            pathCompiler.compile(eplRealmToDeploy.getPlan(), eplRealmToDeploy.getEplInsperctor(),
+                    eplRealmToDeploy.getInfraDescription(), eplRealmToDeploy.getInputStreams());
+            logger.debug(pathCompiler.getExecutionPlan());
         }
+
+        if (DEPLOY && pathCompiler != null) {
+            // 5 send the plan to PATHdeployer
+            socketHandler = new SocketClientHandler(inputHandler.getPathDeployerIp(), inputHandler.getPathDeployerPort());
+            socketHandler.connect();
+            socketHandler.send(pathCompiler.getExecutionPlan());
+        }
+
+        logger.info("It is done.");
+        logger.info(String.format("It took %d ms to process through %d physical plans.",
+                (System.currentTimeMillis() - startTime), physicalPlanCounter));
     }
+
+
+    /**
+     * Initialisation of
+     * * neo4j handler - establish connection, clean the db
+     * * eplInspector - init the ESPer CEP engine
+     * * operator handler - logical and physical plan optimisation module
+     */
+    private static void initInternalHandlers(InputHandler inputHandler) {
+        neoHandler = new NeoHandler(inputHandler.getNeoAddress() + ":" + inputHandler.getNeoPort(),
+                inputHandler.getNeoUser(), inputHandler.getNeoPass());
+        eplInspector = new EsperSodaInspector(neoHandler);
+        opHandler = new OperatorHandler(neoHandler);
+        reqHandler = new RequirementHandler(inputHandler.getRequirements());
+        planWriter = new PlanWriter();
+    }
+}

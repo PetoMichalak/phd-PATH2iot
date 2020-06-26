@@ -1267,7 +1267,7 @@ public class EsperSodaInspector {
             // check flexi_time_batch
             if (epl.contains("flexi_time_batch")) {
                 logger.info("Detected extension to EPL - flexi_time_batch in: " + epl);
-                // parse the arguments arguments: start, stop, step, units
+                // parse the arguments arguments: start, stop, step
                 String searchTerm = "flexi_time_batch";
                 int argIndex = epl.indexOf(searchTerm);
 
